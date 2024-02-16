@@ -3,7 +3,9 @@ use dotenvy::dotenv;
 use teloxide::{prelude::*, utils::command::BotCommands};
 use teloxide::types::MessageKind;
 
-#[tokio::main]
+mod webhook;
+
+#[actix_web::main]
 async fn main() {
     pretty_env_logger::init();
 
@@ -12,10 +14,12 @@ async fn main() {
 
     log::info!("Starting Nyamedia Group Bot...");
 
-    let bot = Bot::from_env();
+    actix_rt::spawn(async move {
+        let bot = Bot::from_env();
+        Command::repl(bot, answer).await;
+    });
 
-    Command::repl(bot, answer).await;
-
+    webhook::run_server().await.expect("Failed to start Emby Webhook Server.");
 }
 
 #[derive(BotCommands, Clone)]
