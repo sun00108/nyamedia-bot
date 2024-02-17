@@ -49,7 +49,7 @@ async fn handle_webhook(payload: web::Json<WebhookPayload>, data: web::Data<Arc<
                     series_ids.push(item.series_id.clone());
                     for chat_id in &data.chat_list { // <- 之后更改为从数据库中读取
                         let receipt = ChatId(*chat_id);
-                        data.bot.send_message(receipt, format!("新剧集入库: {} ({})\n{} - 第{}集 - {}", item.series_name, item.production_year, item.season_name, item.index_number, item.name)).await.ok();
+                        data.bot.send_message(receipt, format!("新剧集入库: {} ({})\n{} - 第 {} 集 - {}", item.series_name, item.production_year, item.season_name, item.index_number, item.name)).await.ok();
                     }
                 }
             } else {
