@@ -150,7 +150,14 @@ async fn cancel(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
 }
 
 async fn invalid_state(bot: Bot, msg: Message) -> HandlerResult {
-    bot.send_message(msg.chat.id, "无效的bot命令，请使用 /help 查看可用命令。").await?;
+    match msg.chat.kind {
+        ChatKind::Private(_) => {
+            bot.send_message(msg.chat.id, "无效的bot命令，请使用 /help 查看可用命令。").await?;
+        },
+        _ => {
+            // 当 bot 拥有 admin 权限的时候就会收到每一条消息。
+        }
+    }
     Ok(())
 }
 
