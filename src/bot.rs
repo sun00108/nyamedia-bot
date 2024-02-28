@@ -5,11 +5,23 @@ use teloxide::{
     utils::command::BotCommands,
 };
 use teloxide::types::{ChatKind, MediaKind, MessageKind};
+use serde::Serialize;
+use reqwest::Client;
 
 use crate::auth;
 
 type MyDialogue = Dialogue<State, InMemStorage<State>>;
 type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+#[derive(Serialize)]
+struct EmbyRegisterPayload {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "CopyFromUserId")]
+    copy_from_user_id: String,
+    #[serde(rename = "UserCopyOptions")]
+    user_copy_options: Vec<String>,
+}
 
 #[derive(Clone, Default)]
 pub enum State {
@@ -131,9 +143,16 @@ async fn register_username(bot: Bot, dialogue: MyDialogue, msg: Message) -> Hand
                     bot.send_message(msg.chat.id, "用户名不能以 / 开头，请重新输入。").await?;
                     return Ok(());
                 }
-                auth::register(msg.chat.id.0, text.text);
-                bot.send_message(msg.chat.id, "注册成功！").await?;
-                dialogue.update(State::Start).await?;
+                match submit_emby_register(text.text.clone()).await {
+                    Ok(_) => {
+                        auth::register(msg.chat.id.0, text.text);
+                        bot.send_message(msg.chat.id, "注册成功。").await?;
+                    },
+                    Err(e) => {
+                        bot.send_message(msg.chat.id, format!("注册失败。\n{}\n请重新使用 /register 开始注册流程。", e)).await?;
+                    }
+                }
+                dialogue.exit().await?;
             }
             _ => {
                 bot.send_message(msg.chat.id, "无效的用户名，请重新输入。").await?;
@@ -159,6 +178,33 @@ async fn invalid_state(bot: Bot, msg: Message) -> HandlerResult {
         }
     }
     Ok(())
+}
+
+async fn submit_emby_register(username: String) -> Result<(), String> {
+    let client = Client::new();
+    let emby_url = env::var("EMBY_URL").expect("EMBY_URL must be set");
+    let copy_from_user_id = env::var("EMBY_COPY_FROM_USER_ID").expect("EMBY_COPY_FROM_USER_ID must be set");
+    let emby_token = env::var("EMBY_TOKEN").expect("EMBY_TOKEN must be set");
+
+    let user = EmbyRegisterPayload {
+        name: username,
+        copy_from_user_id: copy_from_user_id,
+        user_copy_options: vec!["UserPolicy".to_string()],
+    };
+
+    let res = client.post(format!("{}/Users/New", emby_url))
+        .json(&user)
+        .header("X-Emby-Token", emby_token)
+        .send()
+        .await
+        .map_err(|e| format!("请联系管理员。[Error: Emby API]"))?;
+
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        let error_message = res.text().await.map_err(|e| format!("请联系管理员。[Error: res.text]"))?;
+        Err(error_message)
+    }
 }
 
 pub async fn bot_start() {
