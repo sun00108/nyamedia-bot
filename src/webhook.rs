@@ -82,12 +82,15 @@ pub async fn run_server() -> std::io::Result<()> {
         series_ids: Mutex::new(Vec::new()),
     });
 
+    let bind_address = env::var("WEBHOOK_BIND_ADDRESS").unwrap();
+    let bind_port = env::var("WEBHOOK_BIND_PORT").unwrap();
+
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(data.clone()))
             .service(web::resource("/webhook").route(web::post().to(handle_webhook)))
     })
-        .bind("127.0.0.1:3000")?
+        .bind(format!("{}:{}",bind_address,bind_port))?
         .run()
         .await
 }
