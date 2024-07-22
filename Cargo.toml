@@ -27,5 +27,9 @@ name = "webhook"
 path = "src/bin/emby_webhook.rs"
 
 [[bin]]
+name = "folderguard"
+path = "src/bin/folder_guard.rs"
+
+[[bin]]
 name = "bot"
 path = "src/bin/nyabot.rs"
