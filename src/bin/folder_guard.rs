@@ -30,24 +30,21 @@ fn write_config_pending<P: AsRef<Path>>(path: P, config: &Vec<ConfigEntry>) -> i
 fn monitor_folder<P: AsRef<Path>>(folder_path: P, config_path: P, pending_config_path: P) -> io::Result<()> {
     loop {
         let config = read_config(&config_path)?;
+        let existing_sources: Vec<String> = config.iter().map(|e| e.source.clone()).collect();
         let mut pending_config = read_config(&pending_config_path).unwrap_or_else(|_| Vec::new());
-        let mut existing_sources: Vec<String> = pending_config.iter().map(|e| e.source.clone()).collect();
 
         for entry in fs::read_dir(&folder_path)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
                 if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if let Some(config_entry) = config.iter().find(|e| e.source == folder_name) {
-                        if !existing_sources.contains(&config_entry.source) {
-                            let pending_entry = ConfigEntry {
-                                source: config_entry.source.clone(),
-                                destination: "".to_string(),
-                                regex: config_entry.regex.clone(),
-                            };
-                            pending_config.push(pending_entry);
-                            existing_sources.push(config_entry.source.clone());
-                        }
+                    if !existing_sources.iter().any(|s| s == &folder_name) && !pending_config.iter().any(|e| e.source == folder_name) {
+                        let pending_entry = ConfigEntry {
+                            source: folder_name.parse().unwrap(),
+                            destination: "".to_string(),
+                            regex: "S(\\d+)E(\\d+)".to_string(),
+                        };
+                        pending_config.push(pending_entry);
                     }
                 }
             }
