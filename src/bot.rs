@@ -37,6 +37,11 @@ pub enum State {
         data_source: String,
         media_type: String,
     },
+    WaitingRequestConfirmation {
+        data_source: String,
+        media_type: String,
+        media_id: String,
+    }
 }
 
 #[derive(BotCommands, Clone)]
@@ -77,7 +82,8 @@ fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>>
         .branch(dptree::endpoint(invalid_state));
     let callback_query_handler = Update::filter_callback_query()
         .branch(case![State::WaitingRequestDatasource].endpoint(request_media_type))
-        .branch(case![State::WaitingRequestMediaType { data_source }].endpoint(request_media_id));
+        .branch(case![State::WaitingRequestMediaType { data_source }].endpoint(request_media_id))
+        .branch(case![State::WaitingRequestConfirmation { data_source, media_type, media_id }].endpoint(handle_request_confirmation));
     dialogue::enter::<Update, InMemStorage<State>, State, _>()
         .branch(message_handler).branch(callback_query_handler)
 }
@@ -115,7 +121,7 @@ async fn help(bot: Bot, msg: Message) -> HandlerResult {
             }
         }
         _ => {
-            bot.send_message(msg.chat.id, "可用命令：\n/help - 显示此帮助\n/register - 注册新用户").await?;
+            bot.send_message(msg.chat.id, "可用命令：\n/help - 显示此帮助\n/register - 注册新用户\n/request - 请求新媒体资源").await?;
         }
     }
     Ok(())
@@ -310,7 +316,7 @@ async fn request_media_id(bot: Bot, dialogue: MyDialogue, data_source: String, q
     Ok(())
 }
 
-async fn request_confirmation(bot: Bot, dialogue: MyDialogue, msg: Message, data: (String,String)) -> HandlerResult {
+async fn request_confirmation(bot: Bot, dialogue: MyDialogue, msg: Message, data: (String, String)) -> HandlerResult {
     if let MessageKind::Common(common) = msg.kind {
         match common.media_kind {
             MediaKind::Text(text) => {
@@ -318,31 +324,92 @@ async fn request_confirmation(bot: Bot, dialogue: MyDialogue, msg: Message, data
                     bot.send_message(msg.chat.id, "媒体ID应为纯数字，请重新输入。").await?;
                     return Ok(());
                 }
-                match data.0.as_str() {
+
+                let media_link = match data.0.as_str() {
                     "TMDB" => {
                         match data.1.as_str() {
-                            "电影" => {
-                                bot.send_message(msg.chat.id, format!("https://www.themoviedb.org/{}/{}", "movie", text.text)).await?;
-                            },
-                            "电视剧" => {
-                                bot.send_message(msg.chat.id, format!("https://www.themoviedb.org/{}/{}", "tv", text.text)).await?;
-                            },
+                            "电影" => format!("https://www.themoviedb.org/movie/{}", text.text),
+                            "电视剧" => format!("https://www.themoviedb.org/tv/{}", text.text),
                             _ => {
                                 bot.send_message(msg.chat.id, "未知错误，请联系管理员。[RequestConfirmation]").await?;
+                                return Ok(());
                             }
                         }
                     },
-                    "BGM.TV" => {
-                        bot.send_message(msg.chat.id, format!("https://bgm.tv/subject/{}", text.text)).await?;
-                    },
+                    "BGM.TV" => format!("https://bgm.tv/subject/{}", text.text),
                     _ => {
                         bot.send_message(msg.chat.id, "未知错误，请联系管理员。[RequestConfirmation]").await?;
+                        return Ok(());
                     }
-                }
-                dialogue.exit().await?;
+                };
+
+                let keyboard = InlineKeyboardMarkup::new(vec![
+                    vec![InlineKeyboardButton::callback("确认", "confirm")],
+                    vec![InlineKeyboardButton::callback("取消", "cancel")],
+                ]);
+
+                bot.send_message(msg.chat.id, format!("您要请求的媒体链接是：\n{}\n请确认是否提交请求：", media_link))
+                    .reply_markup(keyboard)
+                    .await?;
+
+                dialogue.update(State::WaitingRequestConfirmation {
+                    data_source: data.0,
+                    media_type: data.1,
+                    media_id: text.text
+                }).await?;
             }
             _ => {
                 bot.send_message(msg.chat.id, "无效的ID，ID应为纯数字，请重新输入。").await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn handle_request_confirmation(bot: Bot, dialogue: MyDialogue, q: CallbackQuery, (data_source, media_type, media_id): (String, String, String), ) -> HandlerResult {
+    if let Some(choice) = q.data {
+        match choice.as_str() {
+            "confirm" => {
+                bot.send_message(dialogue.chat_id(), "Request Submitted").await?;
+                // 后期将请求存入收据库，当请求完成后通知用户。
+
+                let admin_users = env::var("ADMIN_USERS")
+                    .unwrap_or_else(|_| String::new())
+                    .split(',')
+                    .filter_map(|id| id.parse::<i64>().ok())
+                    .collect::<Vec<i64>>();
+
+                let media_link = match data_source.as_str() {
+                    "TMDB" => {
+                        match media_type.as_str() {
+                            "电影" => format!("https://www.themoviedb.org/movie/{}", media_id),
+                            "电视剧" => format!("https://www.themoviedb.org/tv/{}", media_id),
+                            _ => format!("未知类型: {}", media_type),
+                        }
+                    },
+                    "BGM.TV" => format!("https://bgm.tv/subject/{}", media_id),
+                    _ => format!("未知来源: {}", data_source),
+                };
+
+                let notification_message = format!(
+                    "新的媒体请求:\n数据来源: {}\n类型: {}\n媒体ID: {}\n链接: {}",
+                    data_source, media_type, media_id, media_link
+                );
+
+                for admin_id in admin_users {
+                    bot.send_message(ChatId(admin_id), &notification_message).await?;
+                }
+                dialogue.exit().await?;
+            }
+            "cancel" => {
+                bot.send_message(dialogue.chat_id(), "请求已取消。请重新开始请求流程。").await?;
+                dialogue.update(State::Start).await?;
+                request_start(bot, dialogue, q.message.unwrap()).await?;
+            }
+            _ => {
+                bot.send_message(dialogue.chat_id(), "未知的选择，请重新开始请求流程。").await?;
+                dialogue.update(State::Start).await?;
+                request_start(bot, dialogue, q.message.unwrap()).await?;
             }
         }
     }
