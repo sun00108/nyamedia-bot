@@ -46,6 +46,8 @@ enum Command {
     Help,
     /// NOOOOOO Check In,
     CheckIn,
+    /// NOOOOOO Check Out,
+    CheckOut,
     /// Start the purchase procedure.
     Start,
     /// Check the Chat ID,
@@ -63,6 +65,7 @@ fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>>
     let command_handler = teloxide::filter_command::<Command, _>()
         .branch(case![Command::Help].endpoint(help))
         .branch(case![Command::CheckIn].endpoint(check_in))
+        .branch(case![Command::CheckOut].endpoint(check_out))
         .branch(case![Command::ChatID].endpoint(chat_id))
         .branch(case![Command::Register].endpoint(register_start))
         .branch(case![Command::Request].endpoint(request_start))
@@ -115,6 +118,15 @@ async fn help(bot: Bot, msg: Message) -> HandlerResult {
             bot.send_message(msg.chat.id, "可用命令：\n/help - 显示此帮助\n/register - 注册新用户").await?;
         }
     }
+    Ok(())
+}
+
+async fn check_out(bot: Bot, msg: Message) -> HandlerResult {
+    // NO CHECKOUT
+    // 等待5秒
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    // 删除用户的 /checkout 消息
+    bot.delete_message(msg.chat.id, msg.id).await?;
     Ok(())
 }
 
@@ -223,7 +235,7 @@ async fn register_username(bot: Bot, dialogue: MyDialogue, msg: Message) -> Hand
                 match submit_emby_register(text.text.clone()).await {
                     Ok(_) => {
                         auth::register(msg.chat.id.0, text.text);
-                        bot.send_message(msg.chat.id, "注册成功。").await?;
+                        bot.send_message(msg.chat.id, "注册成功。默认密码为空，请登录后自行修改。").await?;
                     },
                     Err(e) => {
                         bot.send_message(msg.chat.id, format!("注册失败。\n{}\n请重新使用 /register 开始注册流程。", e)).await?;
