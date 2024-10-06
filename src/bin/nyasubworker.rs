@@ -117,7 +117,14 @@ fn process_files(config: &Config) -> Result<(), Box<dyn Error>> {
                                                     path.extension().map_or_else(|| "".to_string(), |ext| format!(".{}", ext.to_str().unwrap()))
                         );
 
-                        let new_path = destination.join(new_file_name);
+                        let new_path = destination.join(&new_file_name);
+
+                        // Check if the file already exists in the destination
+                        if new_path.exists() {
+                            println!("File already exists, skipping: {:?}", new_path);
+                            continue;
+                        }
+
                         fs::rename(&path, &new_path)?;
                         println!("Moved {:?} to {:?}", path, new_path);
                     }
