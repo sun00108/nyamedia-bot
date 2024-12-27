@@ -1,7 +1,5 @@
 use crate::establish_connection;
-use std::env;
 use diesel::prelude::*;
-use dotenvy::dotenv;
 use crate::models::{NewTelegramUser, TelegramUser};
 
 pub fn check_admin(tg_id: i64) -> bool {
@@ -46,6 +44,16 @@ pub fn register(telegram_id: i64, username: String, emby_user_id: String) {
         .expect("Error registering user");
 }
 
-pub fn get_emby_id(telegram_id: i64) -> String {
-    "default_emby_id".to_string()
+pub fn get_emby_id(tg_id: i64) -> String {
+    use crate::schema::telegram_users::dsl::*;
+    let conn = &mut establish_connection();
+    let results = telegram_users
+        .filter(telegram_id.eq(tg_id))
+        .limit(1)
+        .load::<TelegramUser>(conn)
+        .expect("Error loading users");
+    if results.len() > 0 {
+        return results[0].emby_user_id.clone();
+    }
+    "".to_string()
 }

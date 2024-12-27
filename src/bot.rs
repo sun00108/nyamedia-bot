@@ -129,7 +129,7 @@ async fn help(bot: Bot, msg: Message) -> HandlerResult {
             }
         }
         _ => {
-            bot.send_message(msg.chat.id, "可用命令：\n/help - 显示此帮助\n/register - 注册新用户\n/request - 请求新媒体资源").await?;
+            bot.send_message(msg.chat.id, "可用命令：\n/help - 显示此帮助\n/register - 注册新用户\n/passwordreset - 将密码重置为空\n/request - 请求新媒体资源").await?;
         }
     }
     Ok(())
