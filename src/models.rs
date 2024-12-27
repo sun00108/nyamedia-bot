@@ -8,6 +8,7 @@ pub struct TelegramUser {
     pub telegram_id: i64,
     pub username: String,
     pub admin: bool,
+    pub emby_user_id: String,
 }
 
 #[derive(Insertable)]

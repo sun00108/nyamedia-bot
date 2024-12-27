@@ -6,5 +6,6 @@ diesel::table! {
         telegram_id -> BigInt,
         username -> Text,
         admin -> Bool,
+        emby_user_id -> Text,
     }
 }
