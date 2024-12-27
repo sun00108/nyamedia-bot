@@ -6,7 +6,7 @@ use teloxide::{
     utils::command::BotCommands,
 };
 use teloxide::types::{ChatKind, InlineKeyboardButton, InlineKeyboardMarkup, MediaKind, MessageKind};
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use reqwest::Client;
 
 use crate::auth;
@@ -22,6 +22,11 @@ struct EmbyRegisterPayload {
     copy_from_user_id: String,
     #[serde(rename = "UserCopyOptions")]
     user_copy_options: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct EmbyUserDto {
+    Id: String,
 }
 
 #[derive(Clone, Default)]
@@ -59,6 +64,8 @@ enum Command {
     ChatID,
     /// Register a new user.
     Register,
+    /// Request a password reset.
+    PasswordReset,
     /// Request a new media,
     Request,
     /// Cancel the operation.
@@ -73,6 +80,7 @@ fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>>
         .branch(case![Command::CheckOut].endpoint(check_out))
         .branch(case![Command::ChatID].endpoint(chat_id))
         .branch(case![Command::Register].endpoint(register_start))
+        .branch(case![Command::PasswordReset].endpoint(password_reset))
         .branch(case![Command::Request].endpoint(request_start))
         .branch(case![Command::Cancel].endpoint(cancel));
     let message_handler = Update::filter_message()
@@ -239,8 +247,8 @@ async fn register_username(bot: Bot, dialogue: MyDialogue, msg: Message) -> Hand
                     return Ok(());
                 }
                 match submit_emby_register(text.text.clone()).await {
-                    Ok(_) => {
-                        auth::register(msg.chat.id.0, text.text);
+                    Ok(emby_user_id) => {
+                        auth::register(msg.chat.id.0, text.text, emby_user_id);
                         bot.send_message(msg.chat.id, "注册成功。默认密码为空，请登录后自行修改。").await?;
                     },
                     Err(e) => {
@@ -272,6 +280,33 @@ async fn request_start(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerR
                 .reply_markup(InlineKeyboardMarkup::new([data_sources]))
                 .await?;
             dialogue.update(State::WaitingRequestDatasource).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn password_reset(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
+    match msg.chat.kind {
+        ChatKind::Public(_) => {
+            let reply = bot.send_message(msg.chat.id, "请在私聊中使用此命令。").await?;
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            bot.delete_message(msg.chat.id, msg.id).await?;
+            bot.delete_message(msg.chat.id, reply.id).await?;
+        }
+        _ => {
+            if !auth::check_registered(msg.chat.id.0) {
+                bot.send_message(msg.chat.id, "您还没有注册，无法使用该命令。").await?;
+                return Ok(());
+            }
+            let emby_user_id = auth::get_emby_id(msg.chat.id.0);
+            match submit_emby_password_update(emby_user_id).await {
+                Ok(_) => {
+                    bot.send_message(msg.chat.id, "密码重置成功，现在密码为空。").await?;
+                },
+                Err(e) => {
+                    bot.send_message(msg.chat.id, format!("密码重置失败。\n{}\n请联系管理员。", e)).await?;
+                }
+            }
         }
     }
     Ok(())
@@ -434,7 +469,7 @@ async fn invalid_state(bot: Bot, msg: Message) -> HandlerResult {
     Ok(())
 }
 
-async fn submit_emby_register(username: String) -> Result<(), String> {
+async fn submit_emby_register(username: String) -> Result<String, String> {
     let client = Client::new();
     let emby_url = env::var("EMBY_URL").expect("EMBY_URL must be set");
     let copy_from_user_id = env::var("EMBY_COPY_FROM_USER_ID").expect("EMBY_COPY_FROM_USER_ID must be set");
@@ -448,6 +483,31 @@ async fn submit_emby_register(username: String) -> Result<(), String> {
 
     let res = client.post(format!("{}/Users/New", emby_url))
         .json(&user)
+        .header("X-Emby-Token", emby_token)
+        .send()
+        .await
+        .map_err(|e| format!("请联系管理员。[Error: Emby API]"))?;
+
+    if res.status().is_success() {
+        let user_dto: EmbyUserDto = res.json().await.map_err(|_| "请联系管理员。[Error: Parsing JSON]".to_string())?;
+        Ok(user_dto.Id)
+    } else {
+        let error_message = res.text().await.map_err(|e| format!("请联系管理员。[Error: res.text]"))?;
+        Err(error_message)
+    }
+}
+
+async fn submit_emby_password_update(user_id: String) -> Result<(), String> {
+    let client = Client::new();
+    let emby_url = env::var("EMBY_URL").expect("EMBY_URL must be set");
+    let emby_token = env::var("EMBY_TOKEN").expect("EMBY_TOKEN must be set");
+
+    let password_payload = serde_json::json!({
+        "ResetPassword": true
+    });
+
+    let res = client.post(format!("{}/Users/{}/Password", emby_url, user_id))
+        .json(&password_payload)
         .header("X-Emby-Token", emby_token)
         .send()
         .await

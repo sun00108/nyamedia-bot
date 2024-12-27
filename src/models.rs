@@ -16,4 +16,5 @@ pub struct TelegramUser {
 pub struct NewTelegramUser {
     pub telegram_id: i64,
     pub username: String,
+    pub emby_user_id: String,
 }
