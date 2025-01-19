@@ -81,7 +81,7 @@ async fn update_rules(config: &mut Config) -> Result<(), Box<dyn Error>> {
                 folder_name: folder_name.clone(),
                 chinese_name,
                 target_dir: String::from("/data/animenew"),
-                pattern: String::from(r"S(\\d+)E(\\d+)"),
+                pattern: String::from(r"S(\d+)E(\d+)"),
             });
         }
     }
