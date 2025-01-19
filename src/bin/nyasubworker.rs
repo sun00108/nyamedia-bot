@@ -5,10 +5,13 @@ use std::error::Error;
 use std::env;
 use serde::{Deserialize, Serialize};
 use regex::Regex;
+use reqwest;
+use serde_json::Value;
 
 #[derive(Deserialize, Serialize, Clone)]
 struct Config {
     source_dir: String,
+    tmdb_api_key: String,
     #[serde(default)]
     rules: Vec<ArchiveRule>,
 }
@@ -21,7 +24,8 @@ struct ArchiveRule {
     pattern: String,
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     let config_path = if args.len() > 1 {
         &args[1]
@@ -32,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Using config file: {}", config_path);
 
     let mut config = load_config(config_path)?;
-    update_rules(&mut config)?;
+    update_rules(&mut config).await?;
     save_config(&config, config_path)?;
     process_files(&config)?;
     Ok(())
@@ -41,7 +45,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn load_config(path: &str) -> Result<Config, Box<dyn Error>> {
     let content = fs::read_to_string(path).unwrap_or_else(|_| {
         println!("Config file not found. Creating a new one.");
-        String::from("source_dir = \"\"\n")
+        String::from("source_dir = \"\"\ntmdb_api_key = \"\"\n")
     });
     let mut config: Config = toml::from_str(&content)?;
     if config.source_dir.is_empty() {
@@ -57,7 +61,7 @@ fn save_config(config: &Config, path: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn update_rules(config: &mut Config) -> Result<(), Box<dyn Error>> {
+async fn update_rules(config: &mut Config) -> Result<(), Box<dyn Error>> {
     let source_dir = Path::new(&config.source_dir);
     let mut existing_rules: HashMap<String, ArchiveRule> = config.rules.iter().cloned().map(|r| (r.folder_name.clone(), r)).collect();
 
@@ -67,18 +71,54 @@ fn update_rules(config: &mut Config) -> Result<(), Box<dyn Error>> {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
             let folder_name = entry.file_name().to_string_lossy().into_owned();
-            let rule = existing_rules.remove(&folder_name).unwrap_or_else(|| ArchiveRule {
+            let chinese_name = if let Some(rule) = existing_rules.remove(&folder_name) {
+                rule.chinese_name
+            } else {
+                extract_name_and_query_tmdb(&folder_name, &config.tmdb_api_key).await.unwrap_or_else(|_| String::new())
+            };
+
+            updated_rules.push(ArchiveRule {
                 folder_name: folder_name.clone(),
-                chinese_name: String::new(),
+                chinese_name,
                 target_dir: String::from("/data/animenew"),
-                pattern: String::from(r"S(\d+)E(\d+)"),
+                pattern: String::from(r"S(\\d+)E(\\d+)"),
             });
-            updated_rules.push(rule);
         }
     }
 
     config.rules = updated_rules;
     Ok(())
+}
+
+async fn extract_name_and_query_tmdb(folder_name: &str, api_key: &str) -> Result<String, Box<dyn Error>> {
+    let re = Regex::new(r"^(.*?)S\d+")?;
+    if let Some(captures) = re.captures(folder_name) {
+        let raw_name = captures.get(1).map_or("", |m| m.as_str()).replace('.', " ");
+        if let Ok(chinese_name) = query_tmdb(&raw_name, api_key).await {
+            return Ok(chinese_name);
+        }
+    }
+    Ok(String::new())
+}
+
+async fn query_tmdb(raw_name: &str, api_key: &str) -> Result<String, Box<dyn Error>> {
+    let url = format!(
+        "https://api.themoviedb.org/3/search/tv?language=zh-CN&api_key={}&query={}",
+        api_key,
+        raw_name
+    );
+
+    let response = reqwest::get(&url).await?.text().await?;
+    let json: Value = serde_json::from_str(&response)?;
+    if let Some(results) = json["results"].as_array() {
+        if let Some(first_result) = results.first() {
+            if let Some(chinese_name) = first_result["name"].as_str() {
+                return Ok(chinese_name.to_string());
+            }
+        }
+    }
+
+    Err("TMDB query failed".into())
 }
 
 fn process_files(config: &Config) -> Result<(), Box<dyn Error>> {

@@ -1,1 +1,2 @@
 source_dir = "path/to/sourcemedia"
+tmdb_api_key = "your_tmdb_api_key"
