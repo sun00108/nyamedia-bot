@@ -71,20 +71,27 @@ async fn update_rules(config: &mut Config) -> Result<(), Box<dyn Error>> {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
             let folder_name = entry.file_name().to_string_lossy().into_owned();
-            let chinese_name = if let Some(rule) = existing_rules.remove(&folder_name) {
-                rule.chinese_name
-            } else {
-                extract_name_and_query_tmdb(&folder_name, &config.tmdb_api_key).await.unwrap_or_else(|_| String::new())
-            };
+
+            // 检查规则是否已存在，直接复用
+            if let Some(existing_rule) = existing_rules.remove(&folder_name) {
+                updated_rules.push(existing_rule);
+                continue;
+            }
+
+            // 创建新规则
+            let chinese_name = extract_name_and_query_tmdb(&folder_name, &config.tmdb_api_key).await.unwrap_or_else(|_| String::new());
 
             updated_rules.push(ArchiveRule {
                 folder_name: folder_name.clone(),
                 chinese_name,
-                target_dir: String::from("/data/animenew"),
-                pattern: String::from(r"S(\\d+)E(\\d+)"),
+                target_dir: String::from("/data/animenew"), // 新规则默认值
+                pattern: String::from(r"S(\d+)E(\d+)"),
             });
         }
     }
+
+    // 保留所有未匹配的现有规则
+    updated_rules.extend(existing_rules.into_values());
 
     config.rules = updated_rules;
     Ok(())
@@ -92,10 +99,11 @@ async fn update_rules(config: &mut Config) -> Result<(), Box<dyn Error>> {
 
 async fn extract_name_and_query_tmdb(folder_name: &str, api_key: &str) -> Result<String, Box<dyn Error>> {
     // Extract the name part before 'S0x'
-    let re = Regex::new(r"^(.*?)S\\d+")?;
+    let re = Regex::new(r"^(.*?)S\d+")?;
     if let Some(captures) = re.captures(folder_name) {
         let raw_name = captures.get(1).map_or("", |m| m.as_str()).replace('.', " ");
 
+        println!("Extracted name: {}", raw_name);
         // Query TMDB API
         if let Ok(chinese_name) = query_tmdb(&raw_name, api_key).await {
             return Ok(chinese_name);
@@ -105,6 +113,7 @@ async fn extract_name_and_query_tmdb(folder_name: &str, api_key: &str) -> Result
 }
 
 async fn query_tmdb(raw_name: &str, api_key: &str) -> Result<String, Box<dyn Error>> {
+    println!("Querying TMDB for: {}", raw_name);
     let url = format!(
         "https://api.themoviedb.org/3/search/tv?language=zh-CN&api_key={}&query={}",
         api_key,
@@ -112,6 +121,7 @@ async fn query_tmdb(raw_name: &str, api_key: &str) -> Result<String, Box<dyn Err
     );
 
     let response = reqwest::get(&url).await?.text().await?;
+    println!("TMDB response: {}", response);
     let json: Value = serde_json::from_str(&response)?;
 
     if let Some(results) = json["results"].as_array() {
