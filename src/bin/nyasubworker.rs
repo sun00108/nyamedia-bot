@@ -81,7 +81,7 @@ async fn update_rules(config: &mut Config) -> Result<(), Box<dyn Error>> {
                 folder_name: folder_name.clone(),
                 chinese_name,
                 target_dir: String::from("/data/animenew"),
-                pattern: String::from(r"S(\d+)E(\d+)"),
+                pattern: String::from(r"S(\\d+)E(\\d+)"),
             });
         }
     }
@@ -91,9 +91,12 @@ async fn update_rules(config: &mut Config) -> Result<(), Box<dyn Error>> {
 }
 
 async fn extract_name_and_query_tmdb(folder_name: &str, api_key: &str) -> Result<String, Box<dyn Error>> {
-    let re = Regex::new(r"^(.*?)S\d+")?;
+    // Extract the name part before 'S0x'
+    let re = Regex::new(r"^(.*?)S\\d+")?;
     if let Some(captures) = re.captures(folder_name) {
         let raw_name = captures.get(1).map_or("", |m| m.as_str()).replace('.', " ");
+
+        // Query TMDB API
         if let Ok(chinese_name) = query_tmdb(&raw_name, api_key).await {
             return Ok(chinese_name);
         }
@@ -110,6 +113,7 @@ async fn query_tmdb(raw_name: &str, api_key: &str) -> Result<String, Box<dyn Err
 
     let response = reqwest::get(&url).await?.text().await?;
     let json: Value = serde_json::from_str(&response)?;
+
     if let Some(results) = json["results"].as_array() {
         if let Some(first_result) = results.first() {
             if let Some(chinese_name) = first_result["name"].as_str() {
