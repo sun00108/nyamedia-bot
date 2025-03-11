@@ -57,3 +57,17 @@ pub fn get_emby_id(tg_id: i64) -> String {
     }
     "".to_string()
 }
+
+pub fn get_username(tg_id: i64) -> String {
+    use crate::schema::telegram_users::dsl::*;
+    let conn = &mut establish_connection();
+    let results = telegram_users
+        .filter(telegram_id.eq(tg_id))
+        .limit(1)
+        .load::<TelegramUser>(conn)
+        .expect("Error loading users");
+    if results.len() > 0 {
+        return results[0].username.clone();
+    }
+    "".to_string()
+}

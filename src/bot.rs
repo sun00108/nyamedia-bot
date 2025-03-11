@@ -228,7 +228,8 @@ async fn register_start(bot: Bot, dialogue: MyDialogue, msg: Message) -> Handler
         }
         _ => {
             if auth::check_registered(msg.chat.id.0) {
-                bot.send_message(msg.chat.id, "您已经注册过了。").await?;
+                let username = auth::get_username(msg.chat.id.0);
+                bot.send_message(msg.chat.id, format!("您已经注册过了。用户名：{}", username)).await?;
             } else {
                 bot.send_message(msg.chat.id, "请输入您的用户名：").await?;
                 dialogue.update(State::WaitingRegistrationUsername).await?;
