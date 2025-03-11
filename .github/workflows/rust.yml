@@ -30,13 +30,13 @@ jobs:
       run: cargo build --bin bot
       
     - name: Upload nyasubworker artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: nyasubworker
         path: target/debug/nyasubworker
 
     - name: Upload bot artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
           name: bot
           path: target/debug/bot
