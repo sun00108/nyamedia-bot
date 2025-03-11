@@ -46,7 +46,8 @@ pub enum State {
         data_source: String,
         media_type: String,
         media_id: String,
-    }
+    },
+    WaitingDeleteConfirmation,
 }
 
 #[derive(BotCommands, Clone)]
@@ -66,6 +67,8 @@ enum Command {
     Register,
     /// Request a password reset.
     PasswordReset,
+    /// Delete user account
+    DeleteUser,
     /// Request a new media,
     Request,
     /// Cancel the operation.
@@ -260,6 +263,71 @@ async fn register_username(bot: Bot, dialogue: MyDialogue, msg: Message) -> Hand
             }
             _ => {
                 bot.send_message(msg.chat.id, "无效的用户名，请重新输入。").await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn delete_user_start(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
+    match msg.chat.kind {
+        ChatKind::Public(_) => {
+            let reply = bot.send_message(msg.chat.id, "请在私聊中使用此命令。").await?;
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            bot.delete_message(msg.chat.id, msg.id).await?;
+            bot.delete_message(msg.chat.id, reply.id).await?;
+        }
+        _ => {
+            if !auth::check_registered(msg.chat.id.0) {
+                bot.send_message(msg.chat.id, "您还没有注册，无法删除账户。").await?;
+                return Ok(());
+            }
+
+            bot.send_message(
+                msg.chat.id,
+                "⚠️ 警告：此操作将永久删除您的账户，所有数据将被清除且无法恢复。\n\n如果您确定要删除账户，请回复 \"confirm\" 确认。回复其他任何内容将取消此操作。"
+            ).await?;
+
+            dialogue.update(State::WaitingDeleteConfirmation).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn delete_user_confirm(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
+    if let MessageKind::Common(common) = msg.kind {
+        match common.media_kind {
+            MediaKind::Text(text) => {
+                if text.text.to_lowercase() == "confirm" {
+                    // Get Emby user ID before deleting database record
+                    let emby_user_id = auth::get_emby_id(msg.chat.id.0);
+
+                    // Call Emby API to delete the user
+                    match crate::delete_emby_user(&emby_user_id).await {
+                        Ok(_) => {
+                            // If Emby deletion successful, delete from database
+                            match auth::delete_user(msg.chat.id.0) {
+                                Ok(_) => {
+                                    bot.send_message(msg.chat.id, "您的账户已成功删除。").await?;
+                                },
+                                Err(e) => {
+                                    bot.send_message(msg.chat.id, format!("数据库删除失败: {}。但您的Emby账户已删除。", e)).await?;
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            bot.send_message(msg.chat.id, format!("删除失败: {}。请联系管理员。", e)).await?;
+                        }
+                    }
+                } else {
+                    // Any other response cancels the operation
+                    bot.send_message(msg.chat.id, "操作已取消。您的账户未被删除。").await?;
+                }
+                dialogue.exit().await?;
+            },
+            _ => {
+                bot.send_message(msg.chat.id, "无效的输入，操作已取消。").await?;
+                dialogue.exit().await?;
             }
         }
     }

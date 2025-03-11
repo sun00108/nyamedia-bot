@@ -44,6 +44,20 @@ pub fn register(telegram_id: i64, username: String, emby_user_id: String) {
         .expect("Error registering user");
 }
 
+pub fn delete_user(tg_id: i64) -> Result<(), String> {
+    use crate::schema::telegram_users::dsl::*;
+    let conn = &mut establish_connection();
+    let deleted = diesel::delete(telegram_users.filter(telegram_id.eq(tg_id)))
+        .execute(conn)
+        .map_err(|_| "数据库操作失败，请联系管理员。".to_string())?;
+
+    if deleted > 0 {
+        Ok(())
+    } else {
+        Err("找不到用户记录，可能已经被删除。".to_string())
+    }
+}
+
 pub fn get_emby_id(tg_id: i64) -> String {
     use crate::schema::telegram_users::dsl::*;
     let conn = &mut establish_connection();
