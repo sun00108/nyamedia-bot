@@ -85,11 +85,13 @@ fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>>
         .branch(case![Command::Register].endpoint(register_start))
         .branch(case![Command::PasswordReset].endpoint(password_reset))
         .branch(case![Command::Request].endpoint(request_start))
+        .branch(case![Command::DeleteUser].endpoint(delete_user_start))
         .branch(case![Command::Cancel].endpoint(cancel));
     let message_handler = Update::filter_message()
         .branch(command_handler)
         .branch(case![State::WaitingRegistrationUsername].endpoint(register_username))
         .branch(case![State::WaitingRequestMediaID { data_source, media_type }].endpoint(request_confirmation))
+        .branch(case![State::WaitingDeleteConfirmation].endpoint(delete_user_confirm))
         .branch(dptree::endpoint(invalid_state));
     let callback_query_handler = Update::filter_callback_query()
         .branch(case![State::WaitingRequestDatasource].endpoint(request_media_type))
