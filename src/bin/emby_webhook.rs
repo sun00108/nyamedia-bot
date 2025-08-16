@@ -7,7 +7,7 @@ async fn main() -> std::io::Result<()> {
     dotenv().expect(".env file not found");
     
     // 初始化日志
-    pretty_env_logger::init();
+    database::init_logger();
     
     // 运行数据库迁移（带备份）
     match database::run_migrations_with_backup() {

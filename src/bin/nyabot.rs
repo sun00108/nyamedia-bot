@@ -7,7 +7,7 @@ async fn main() {
     dotenv().expect(".env file not found");
     
     // 初始化日志
-    pretty_env_logger::init();
+    database::init_logger();
 
     log::info!("Starting Nyamedia Group Bot...");
 

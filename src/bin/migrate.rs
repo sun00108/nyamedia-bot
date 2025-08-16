@@ -5,7 +5,7 @@ use std::env;
 /// 独立的数据库迁移工具
 fn main() {
     dotenv().expect(".env file not found");
-    pretty_env_logger::init();
+    database::init_logger();
 
     let args: Vec<String> = env::args().collect();
     

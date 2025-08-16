@@ -5,9 +5,20 @@ use std::fs;
 use std::path::Path;
 use chrono::Utc;
 use dotenvy::dotenv;
+use std::sync::Once;
 
 // 嵌入迁移文件
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
+
+// 确保日志只初始化一次
+static INIT_LOGGER: Once = Once::new();
+
+/// 安全的日志初始化函数，避免重复初始化
+pub fn init_logger() {
+    INIT_LOGGER.call_once(|| {
+        pretty_env_logger::init();
+    });
+}
 
 /// 数据库备份和迁移错误类型
 #[derive(Debug)]

@@ -614,7 +614,6 @@ async fn submit_emby_password_update(user_id: String) -> Result<(), String> {
 }
 
 pub async fn bot_start() {
-    pretty_env_logger::init();
     log::info!("Starting bot...");
     let bot = Bot::from_env();
     Dispatcher::builder(bot, schema())
