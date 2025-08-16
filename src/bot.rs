@@ -9,7 +9,10 @@ use teloxide::types::{ChatKind, InlineKeyboardButton, InlineKeyboardMarkup, Medi
 use serde::{Serialize, Deserialize};
 use reqwest::Client;
 
-use crate::auth;
+use crate::{auth, establish_connection};
+use crate::models::{NewMediaRequest, MediaRequest, media_request_status};
+use crate::schema::media_requests;
+use diesel::prelude::*;
 
 type MyDialogue = Dialogue<State, InMemStorage<State>>;
 type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
@@ -476,35 +479,53 @@ async fn handle_request_confirmation(bot: Bot, dialogue: MyDialogue, q: Callback
     if let Some(choice) = q.data {
         match choice.as_str() {
             "confirm" => {
-                bot.send_message(dialogue.chat_id(), "Request Submitted").await?;
-                // 后期将请求存入收据库，当请求完成后通知用户。
-
-                let admin_users = env::var("ADMIN_USERS")
-                    .unwrap_or_else(|_| String::new())
-                    .split(',')
-                    .filter_map(|id| id.parse::<i64>().ok())
-                    .collect::<Vec<i64>>();
-
-                let media_link = match data_source.as_str() {
+                // 获取请求用户的 telegram_id
+                let request_user_id = dialogue.chat_id().0;
+                
+                // 连接数据库
+                let mut conn = establish_connection();
+                
+                // 根据data_source和media_type确定实际的source字段值
+                let actual_source = match data_source.as_str() {
                     "TMDB" => {
                         match media_type.as_str() {
-                            "电影" => format!("https://www.themoviedb.org/movie/{}", media_id),
-                            "电视剧" => format!("https://www.themoviedb.org/tv/{}", media_id),
-                            _ => format!("未知类型: {}", media_type),
+                            "电影" => "TMDB/MV".to_string(),
+                            "电视剧" => "TMDB/TV".to_string(),
+                            _ => data_source.clone(), // 兜底，保持原值
                         }
                     },
-                    "BGM.TV" => format!("https://bgm.tv/subject/{}", media_id),
-                    _ => format!("未知来源: {}", data_source),
+                    "BGM.TV" => data_source.clone(), // BGM.TV不需要区分
+                    _ => data_source.clone(), // 其他情况保持原值
                 };
-
-                let notification_message = format!(
-                    "新的媒体请求:\n数据来源: {}\n类型: {}\n媒体ID: {}\n链接: {}",
-                    data_source, media_type, media_id, media_link
-                );
-
-                for admin_id in admin_users {
-                    bot.send_message(ChatId(admin_id), &notification_message).await?;
+                
+                // 检查是否已经存在相同的请求
+                let existing_request = media_requests::table
+                    .filter(media_requests::source.eq(&actual_source))
+                    .filter(media_requests::media_id.eq(&media_id))
+                    .select(MediaRequest::as_select())
+                    .first(&mut conn)
+                    .optional()?;
+                
+                if existing_request.is_some() {
+                    bot.send_message(dialogue.chat_id(), "该媒体资源已经有人提交过请求了，请勿重复提交。").await?;
+                    dialogue.exit().await?;
+                    return Ok(());
                 }
+                
+                // 创建新的媒体请求
+                let new_request = NewMediaRequest {
+                    source: actual_source,
+                    media_id: media_id.clone(),
+                    request_user: request_user_id,
+                    status: media_request_status::SUBMITTED,
+                };
+                
+                // 插入到数据库
+                diesel::insert_into(media_requests::table)
+                    .values(&new_request)
+                    .execute(&mut conn)?;
+                
+                bot.send_message(dialogue.chat_id(), "请求已提交成功！我们会尽快处理您的请求。").await?;
                 dialogue.exit().await?;
             }
             "cancel" => {

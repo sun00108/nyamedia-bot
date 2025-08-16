@@ -67,7 +67,7 @@ pub fn get_emby_id(tg_id: i64) -> String {
         .load::<TelegramUser>(conn)
         .expect("Error loading users");
     if results.len() > 0 {
-        return results[0].emby_user_id.clone();
+        return results[0].emby_user_id.clone().unwrap_or_else(|| "".to_string());
     }
     "".to_string()
 }
