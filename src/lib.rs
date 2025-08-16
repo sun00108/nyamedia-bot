@@ -1,21 +1,17 @@
 pub mod schema;
 pub mod models;
+pub mod database;
 
 pub mod auth;
 pub mod bot;
 pub mod webhook;
 
 use std::env;
-use diesel::{Connection, SqliteConnection};
-use dotenvy::dotenv;
 use reqwest::Client;
 
-pub fn establish_connection() -> SqliteConnection {
-    dotenv().ok();
-
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    SqliteConnection::establish(&database_url)
-        .unwrap_or_else(|_| panic!("Error connecting to {}", database_url))
+pub fn establish_connection() -> diesel::SqliteConnection {
+    // 使用新的数据库模块
+    database::establish_connection().expect("Failed to establish database connection")
 }
 
 pub async fn delete_emby_user(user_id: &str) -> Result<(), String> {
