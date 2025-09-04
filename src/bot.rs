@@ -76,6 +76,8 @@ enum Command {
     Request,
     /// Cancel the operation.
     Cancel,
+    /// List all media requests.
+    RequestList,
 }
 
 fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>> {
@@ -89,7 +91,8 @@ fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>>
         .branch(case![Command::PasswordReset].endpoint(password_reset))
         .branch(case![Command::Request].endpoint(request_start))
         .branch(case![Command::DeleteUser].endpoint(delete_user_start))
-        .branch(case![Command::Cancel].endpoint(cancel));
+        .branch(case![Command::Cancel].endpoint(cancel))
+        .branch(case![Command::RequestList].endpoint(request_list));
     let message_handler = Update::filter_message()
         .branch(command_handler)
         .branch(case![State::WaitingRegistrationUsername].endpoint(register_username))
@@ -546,6 +549,61 @@ async fn handle_request_confirmation(bot: Bot, dialogue: MyDialogue, q: Callback
 async fn cancel(bot: Bot, dialogue: MyDialogue, msg: Message) -> HandlerResult {
     bot.send_message(msg.chat.id, "操作已取消。").await?;
     dialogue.exit().await?;
+    Ok(())
+}
+
+async fn request_list(bot: Bot, msg: Message) -> HandlerResult {
+    if let MessageKind::Common(common) = msg.kind {
+        if let Some(user) = common.from {
+            let is_admin = auth::check_admin(user.id.0 as i64);
+            if !is_admin {
+                bot.send_message(msg.chat.id, "抱歉，您没有权限使用这个命令。").await?;
+                return Ok(());
+            }
+
+            let mut conn = establish_connection();
+            let requests = media_requests::table
+                .load::<MediaRequest>(&mut conn)?;
+
+            if requests.is_empty() {
+                bot.send_message(msg.chat.id, "当前没有任何媒体请求。").await?;
+                return Ok(());
+            }
+
+            let mut csv_content = "ID,Source,Media ID,Request User,Status,Created At,Updated At\n".to_string();
+            for request in &requests {
+                let status_text = match request.status {
+                    0 => "已提交",
+                    1 => "已入库", 
+                    2 => "被取消",
+                    3 => "不符合规范",
+                    _ => "未知状态",
+                };
+                csv_content.push_str(&format!(
+                    "{},{},{},{},{},{},{}\n",
+                    request.id,
+                    request.source,
+                    request.media_id,
+                    request.request_user,
+                    status_text,
+                    request.created_at,
+                    request.updated_at
+                ));
+            }
+
+            let file_name = format!("media_requests_{}.csv", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+            let temp_file_path = format!("/tmp/{}", file_name);
+            
+            std::fs::write(&temp_file_path, csv_content)?;
+            
+            let file = teloxide::types::InputFile::file(&temp_file_path);
+            bot.send_document(msg.chat.id, file)
+                .caption(format!("所有媒体请求列表 (共 {} 条记录)", requests.len()))
+                .await?;
+
+            std::fs::remove_file(&temp_file_path).ok();
+        }
+    }
     Ok(())
 }
 
