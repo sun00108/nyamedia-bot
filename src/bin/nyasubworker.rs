@@ -67,26 +67,37 @@ async fn update_rules(config: &mut Config) -> Result<(), Box<dyn Error>> {
 
     let mut updated_rules = Vec::new();
 
-    for entry in fs::read_dir(source_dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            let folder_name = entry.file_name().to_string_lossy().into_owned();
+    // 双层遍历：先遍历子文件夹（如tv_US, movie_JP等）
+    for category_entry in fs::read_dir(source_dir)? {
+        let category_entry = category_entry?;
+        if category_entry.file_type()?.is_dir() {
+            let category_name = category_entry.file_name().to_string_lossy().into_owned();
+            let category_path = category_entry.path();
 
-            // 检查规则是否已存在，直接复用
-            if let Some(existing_rule) = existing_rules.remove(&folder_name) {
-                updated_rules.push(existing_rule);
-                continue;
+            // 遍历该子文件夹内的媒体文件夹
+            for media_entry in fs::read_dir(category_path)? {
+                let media_entry = media_entry?;
+                if media_entry.file_type()?.is_dir() {
+                    let media_name = media_entry.file_name().to_string_lossy().into_owned();
+                    let full_folder_name = format!("{}/{}", category_name, media_name);
+
+                    // 检查规则是否已存在，直接复用
+                    if let Some(existing_rule) = existing_rules.remove(&full_folder_name) {
+                        updated_rules.push(existing_rule);
+                        continue;
+                    }
+
+                    // 创建新规则
+                    let chinese_name = extract_name_and_query_tmdb(&media_name, &config.tmdb_api_key).await.unwrap_or_else(|_| String::new());
+
+                    updated_rules.push(ArchiveRule {
+                        folder_name: full_folder_name,
+                        chinese_name,
+                        target_dir: format!("/data/{}", category_name), // 根据子文件夹自动生成
+                        pattern: String::from(r"S(\d+)E(\d+)"),
+                    });
+                }
             }
-
-            // 创建新规则
-            let chinese_name = extract_name_and_query_tmdb(&folder_name, &config.tmdb_api_key).await.unwrap_or_else(|_| String::new());
-
-            updated_rules.push(ArchiveRule {
-                folder_name: folder_name.clone(),
-                chinese_name,
-                target_dir: String::from("/data/animenew"), // 新规则默认值
-                pattern: String::from(r"S(\d+)E(\d+)"),
-            });
         }
     }
 
