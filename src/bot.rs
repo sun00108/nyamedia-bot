@@ -12,6 +12,7 @@ use reqwest::Client;
 use crate::{auth, establish_connection};
 use crate::models::{NewMediaRequest, MediaRequest, media_request_status};
 use crate::schema::media_requests;
+use crate::scraper;
 use diesel::prelude::*;
 
 type MyDialogue = Dialogue<State, InMemStorage<State>>;
@@ -437,38 +438,80 @@ async fn request_confirmation(bot: Bot, dialogue: MyDialogue, msg: Message, data
                     return Ok(());
                 }
 
-                let media_link = match data.0.as_str() {
+                // 发送"正在获取媒体信息..."消息
+                let loading_msg = bot.send_message(msg.chat.id, "正在获取媒体信息...").await?;
+
+                // 根据数据源和媒体类型确定API参数
+                let (api_source, api_media_type) = match data.0.as_str() {
                     "TMDB" => {
-                        match data.1.as_str() {
-                            "电影" => format!("https://www.themoviedb.org/movie/{}", text.text),
-                            "电视剧" => format!("https://www.themoviedb.org/tv/{}", text.text),
+                        let media_type = match data.1.as_str() {
+                            "电影" => "movie",
+                            "电视剧" => "tv",
                             _ => {
-                                bot.send_message(msg.chat.id, "未知错误，请联系管理员。[RequestConfirmation]").await?;
+                                bot.edit_message_text(msg.chat.id, loading_msg.id, "未知的媒体类型，请重新开始。").await?;
                                 return Ok(());
                             }
-                        }
+                        };
+                        ("tmdb", media_type)
                     },
-                    "BGM.TV" => format!("https://bgm.tv/subject/{}", text.text),
+                    "BGM.TV" => ("bgm", "subject"),
                     _ => {
-                        bot.send_message(msg.chat.id, "未知错误，请联系管理员。[RequestConfirmation]").await?;
+                        bot.edit_message_text(msg.chat.id, loading_msg.id, "未知的数据源，请重新开始。").await?;
                         return Ok(());
                     }
                 };
 
-                let keyboard = InlineKeyboardMarkup::new(vec![
-                    vec![InlineKeyboardButton::callback("确认", "confirm")],
-                    vec![InlineKeyboardButton::callback("取消", "cancel")],
-                ]);
+                // 调用刮削API获取媒体信息
+                match scraper::scrape_media_info(api_source, api_media_type, &text.text).await {
+                    Ok(media_info) => {
+                        // 删除加载消息
+                        bot.delete_message(msg.chat.id, loading_msg.id).await.ok();
 
-                bot.send_message(msg.chat.id, format!("您要请求的媒体链接是：\n{}\n请确认是否提交请求：", media_link))
-                    .reply_markup(keyboard)
-                    .await?;
+                        // 构建媒体链接
+                        let media_link = match data.0.as_str() {
+                            "TMDB" => {
+                                match data.1.as_str() {
+                                    "电影" => format!("https://www.themoviedb.org/movie/{}", text.text),
+                                    "电视剧" => format!("https://www.themoviedb.org/tv/{}", text.text),
+                                    _ => format!("https://www.themoviedb.org/{}/{}", api_media_type, text.text)
+                                }
+                            },
+                            "BGM.TV" => format!("https://bgm.tv/subject/{}", text.text),
+                            _ => format!("{}/{}", data.0, text.text)
+                        };
 
-                dialogue.update(State::WaitingRequestConfirmation {
-                    data_source: data.0,
-                    media_type: data.1,
-                    media_id: text.text
-                }).await?;
+                        let keyboard = InlineKeyboardMarkup::new(vec![
+                            vec![InlineKeyboardButton::callback("确认", "confirm")],
+                            vec![InlineKeyboardButton::callback("取消", "cancel")],
+                        ]);
+
+                        let confirmation_text = format!(
+                            "您要请求的媒体信息：\n\n📺 标题：{}\n🔗 链接：{}\n📝 简介：{}\n\n请确认是否提交请求：",
+                            media_info.title,
+                            media_link,
+                            if media_info.summary.is_empty() { "暂无简介" } else { &media_info.summary }
+                        );
+
+                        bot.send_message(msg.chat.id, confirmation_text)
+                            .reply_markup(keyboard)
+                            .await?;
+
+                        dialogue.update(State::WaitingRequestConfirmation {
+                            data_source: data.0,
+                            media_type: data.1,
+                            media_id: text.text
+                        }).await?;
+                    },
+                    Err(error) => {
+                        // 删除加载消息并显示错误
+                        bot.edit_message_text(
+                            msg.chat.id, 
+                            loading_msg.id, 
+                            format!("获取媒体信息失败：{}\n\n请检查媒体ID是否正确，或稍后重试。", error)
+                        ).await?;
+                        dialogue.exit().await?;
+                    }
+                }
             }
             _ => {
                 bot.send_message(msg.chat.id, "无效的ID，ID应为纯数字，请重新输入。").await?;
@@ -523,10 +566,45 @@ async fn handle_request_confirmation(bot: Bot, dialogue: MyDialogue, q: Callback
                     status: media_request_status::SUBMITTED,
                 };
                 
-                // 插入到数据库
+                // 插入到数据库并获取ID
                 diesel::insert_into(media_requests::table)
                     .values(&new_request)
                     .execute(&mut conn)?;
+                
+                // 获取刚插入的请求ID
+                let inserted_request: MediaRequest = media_requests::table
+                    .filter(media_requests::source.eq(&new_request.source))
+                    .filter(media_requests::media_id.eq(&new_request.media_id))
+                    .filter(media_requests::request_user.eq(&new_request.request_user))
+                    .order(media_requests::created_at.desc())
+                    .first(&mut conn)?;
+                
+                // 重新获取媒体信息并保存到media表
+                let (api_source, api_media_type) = match data_source.as_str() {
+                    "TMDB" => {
+                        let media_type_api = match media_type.as_str() {
+                            "电影" => "movie",
+                            "电视剧" => "tv",
+                            _ => "movie", // 兜底
+                        };
+                        ("tmdb", media_type_api)
+                    },
+                    "BGM.TV" => ("bgm", "subject"),
+                    _ => ("unknown", "unknown"),
+                };
+                
+                // 刮削并保存媒体信息
+                if let Ok(media_info) = scraper::scrape_media_info(api_source, api_media_type, &media_id).await {
+                    match scraper::save_media_to_db(&mut conn, inserted_request.id, &media_info) {
+                        Ok(_) => {
+                            // 媒体信息保存成功
+                        },
+                        Err(e) => {
+                            log::warn!("Failed to save media info to database: {:?}", e);
+                            // 即使媒体信息保存失败，也继续
+                        }
+                    }
+                }
                 
                 bot.send_message(dialogue.chat_id(), "请求已提交成功！我们会尽快处理您的请求。").await?;
                 dialogue.exit().await?;

@@ -5,6 +5,8 @@ pub mod database;
 pub mod auth;
 pub mod bot;
 pub mod webhook;
+pub mod static_files;
+pub mod scraper;
 
 use std::env;
 use reqwest::Client;

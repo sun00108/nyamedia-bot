@@ -4,9 +4,11 @@ use teloxide::{prelude::*};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use diesel::prelude::*;
-use crate::models::{MediaRequest, TelegramUser, media_request_status};
-use crate::schema::{media_requests, telegram_users};
+use crate::models::{MediaRequest, TelegramUser, Media, media_request_status};
+use crate::schema::{media_requests, telegram_users, media};
 use crate::database;
+use crate::static_files;
+use crate::scraper;
 use chrono::Utc;
 
 struct WebhookData {
@@ -566,6 +568,302 @@ async fn update_request(
     })
 }
 
+#[derive(serde::Serialize)]
+struct UserCheckResponse {
+    registered: bool,
+    telegram_username: Option<String>,
+    database_username: Option<String>,
+    admin: Option<bool>,
+}
+
+#[derive(serde::Serialize)]
+struct MediaListResponse {
+    id: i32,
+    title: String,
+    poster: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct MediaRequestWithMedia {
+    id: i32,
+    source: String,
+    media_id: String,
+    status: i32,
+    created_at: String,
+    title: Option<String>,
+    poster: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct BatchScrapeResult {
+    total_processed: usize,
+    successful: usize,
+    failed: usize,
+    errors: Vec<String>,
+}
+
+async fn get_pending_requests() -> impl Responder {
+    let mut conn = match database::establish_connection() {
+        Ok(conn) => conn,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "数据库连接失败"
+            }));
+        }
+    };
+
+    // 查询所有未入库的媒体请求（status = 0）并左连接媒体表
+    let pending_requests_result = media_requests::table
+        .left_join(media::table.on(media::media_request_id.eq(media_requests::id)))
+        .filter(media_requests::status.eq(media_request_status::SUBMITTED))
+        .select((
+            media_requests::id,
+            media_requests::source,
+            media_requests::media_id,
+            media_requests::status,
+            media_requests::created_at,
+            media::title.nullable(),
+            media::poster.nullable(),
+        ))
+        .load::<(i32, String, String, i32, String, Option<String>, Option<String>)>(&mut conn);
+
+    match pending_requests_result {
+        Ok(requests) => {
+            let response: Vec<MediaRequestWithMedia> = requests.into_iter().map(|(id, source, media_id, status, created_at, title, poster)| MediaRequestWithMedia {
+                id,
+                source,
+                media_id,
+                status,
+                created_at,
+                title,
+                poster,
+            }).collect();
+            
+            HttpResponse::Ok().json(response)
+        },
+        Err(_) => {
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "数据库查询失败"
+            }))
+        }
+    }
+}
+
+async fn get_archived_requests() -> impl Responder {
+    let mut conn = match database::establish_connection() {
+        Ok(conn) => conn,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "数据库连接失败"
+            }));
+        }
+    };
+
+    // 查询所有已入库的媒体请求（status = 1）并连接媒体表
+    let archived_requests_result = media_requests::table
+        .inner_join(media::table.on(media::media_request_id.eq(media_requests::id)))
+        .filter(media_requests::status.eq(media_request_status::ARCHIVED))
+        .select((
+            media_requests::id,
+            media_requests::source,
+            media_requests::media_id,
+            media_requests::status,
+            media_requests::created_at,
+            media::title,
+            media::poster.nullable(),
+        ))
+        .load::<(i32, String, String, i32, String, String, Option<String>)>(&mut conn);
+
+    match archived_requests_result {
+        Ok(requests) => {
+            let response: Vec<MediaRequestWithMedia> = requests.into_iter().map(|(id, source, media_id, status, created_at, title, poster)| MediaRequestWithMedia {
+                id,
+                source,
+                media_id,
+                status,
+                created_at,
+                title: Some(title),
+                poster,
+            }).collect();
+            
+            HttpResponse::Ok().json(response)
+        },
+        Err(_) => {
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "数据库查询失败"
+            }))
+        }
+    }
+}
+
+async fn batch_scrape_media() -> impl Responder {
+    let mut conn = match database::establish_connection() {
+        Ok(conn) => conn,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "数据库连接失败"
+            }));
+        }
+    };
+
+    // 查询所有没有对应媒体信息的请求
+    let unscraped_requests_result = media_requests::table
+        .left_join(media::table.on(media::media_request_id.eq(media_requests::id)))
+        .filter(media::id.is_null()) // 没有对应的媒体信息
+        .select((
+            media_requests::id,
+            media_requests::source,
+            media_requests::media_id,
+        ))
+        .load::<(i32, String, String)>(&mut conn);
+
+    let unscraped_requests = match unscraped_requests_result {
+        Ok(requests) => requests,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "查询未刮削媒体失败"
+            }));
+        }
+    };
+
+    let total_processed = unscraped_requests.len();
+    let mut successful = 0;
+    let mut failed = 0;
+    let mut errors = Vec::new();
+
+    // 批量处理每个请求
+    for (request_id, source, media_id) in unscraped_requests {
+        // 确定API参数
+        let (api_source, api_media_type) = match source.as_str() {
+            "TMDB/MV" => ("tmdb", "movie"),
+            "TMDB/TV" => ("tmdb", "tv"),
+            "BGM.TV" => ("bgm", "subject"),
+            _ => {
+                let error_msg = format!("请求ID {}: 不支持的媒体源: {}", request_id, source);
+                errors.push(error_msg);
+                failed += 1;
+                continue;
+            }
+        };
+
+        // 调用刮削API
+        match scraper::scrape_media_info(api_source, api_media_type, &media_id).await {
+            Ok(media_info) => {
+                // 保存媒体信息到数据库
+                match scraper::save_media_to_db(&mut conn, request_id, &media_info) {
+                    Ok(_) => {
+                        successful += 1;
+                        log::info!("成功刮削请求ID {}: {} {}", request_id, source, media_id);
+                    },
+                    Err(e) => {
+                        let error_msg = format!("请求ID {}: 保存失败: {:?}", request_id, e);
+                        errors.push(error_msg);
+                        failed += 1;
+                        log::warn!("请求ID {} 保存失败: {:?}", request_id, e);
+                    }
+                }
+            },
+            Err(e) => {
+                let error_msg = format!("请求ID {}: 刮削失败: {}", request_id, e);
+                errors.push(error_msg);
+                failed += 1;
+                log::warn!("请求ID {} 刮削失败: {}", request_id, e);
+            }
+        }
+
+        // 添加短暂延迟以避免API限制
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+
+    let result = BatchScrapeResult {
+        total_processed,
+        successful,
+        failed,
+        errors,
+    };
+
+    log::info!(
+        "批量刮削完成: 总计={}, 成功={}, 失败={}", 
+        total_processed, successful, failed
+    );
+
+    HttpResponse::Ok().json(result)
+}
+
+async fn get_media_list() -> impl Responder {
+    let mut conn = match database::establish_connection() {
+        Ok(conn) => conn,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "数据库连接失败"
+            }));
+        }
+    };
+
+    // 查询所有媒体数据
+    let media_result = media::table
+        .load::<Media>(&mut conn);
+
+    match media_result {
+        Ok(media_list) => {
+            let response: Vec<MediaListResponse> = media_list.into_iter().map(|m| MediaListResponse {
+                id: m.id,
+                title: m.title,
+                poster: m.poster,
+            }).collect();
+            
+            HttpResponse::Ok().json(response)
+        },
+        Err(_) => {
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "数据库查询失败"
+            }))
+        }
+    }
+}
+
+async fn check_user_registration(path: web::Path<i64>) -> impl Responder {
+    let telegram_id = path.into_inner();
+    
+    let mut conn = match database::establish_connection() {
+        Ok(conn) => conn,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "数据库连接失败"
+            }));
+        }
+    };
+
+    // 查询用户是否存在
+    let user_result = telegram_users::table
+        .filter(telegram_users::telegram_id.eq(telegram_id))
+        .first::<TelegramUser>(&mut conn);
+
+    match user_result {
+        Ok(user) => {
+            HttpResponse::Ok().json(UserCheckResponse {
+                registered: true,
+                telegram_username: None, // 这个需要从 Telegram 数据获取
+                database_username: Some(user.username),
+                admin: Some(user.admin),
+            })
+        },
+        Err(diesel::result::Error::NotFound) => {
+            HttpResponse::Ok().json(UserCheckResponse {
+                registered: false,
+                telegram_username: None,
+                database_username: None,
+                admin: None,
+            })
+        },
+        Err(_) => {
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "数据库查询失败"
+            }))
+        }
+    }
+}
+
 pub async fn run_server() -> std::io::Result<()> {
     println!("Starting Emby Webhook Server...");
 
@@ -594,6 +892,13 @@ pub async fn run_server() -> std::io::Result<()> {
             .service(web::resource("/webhook").route(web::post().to(handle_webhook)))
             .service(web::resource("/requests").route(web::get().to(get_media_requests)))
             .service(web::resource("/update_request").route(web::post().to(update_request)))
+            .service(web::resource("/api/check_user/{telegram_id}").route(web::get().to(check_user_registration)))
+            .service(web::resource("/api/media").route(web::get().to(get_media_list)))
+            .service(web::resource("/api/pending").route(web::get().to(get_pending_requests)))
+            .service(web::resource("/api/archived").route(web::get().to(get_archived_requests)))
+            .service(web::resource("/api/batch-scrape").route(web::post().to(batch_scrape_media)))
+            .service(web::resource("/assets/{filename:.*}").route(web::get().to(static_files::serve_asset_direct)))
+            .configure(static_files::configure_static_routes)
     })
         .bind(format!("{}:{}",bind_address,bind_port))?
         .run()

@@ -43,6 +43,29 @@ pub struct NewMediaRequest {
     pub status: i32,
 }
 
+#[derive(Queryable, Selectable, Debug)]
+#[diesel(table_name = crate::schema::media)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+pub struct Media {
+    pub id: i32,
+    pub media_request_id: i32,
+    pub title: String,
+    pub summary: Option<String>,
+    pub poster: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = crate::schema::media)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+pub struct NewMedia {
+    pub media_request_id: i32,
+    pub title: String,
+    pub summary: Option<String>,
+    pub poster: Option<String>,
+}
+
 // Status constants for MediaRequest
 pub mod media_request_status {
     pub const SUBMITTED: i32 = 0;   // 已提交

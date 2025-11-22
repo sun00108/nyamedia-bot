@@ -6,3 +6,8 @@
 db/*.sqlite3
 
 CLAUDE.md
+
+web/node_modules
+static/assets
+
+*.md
