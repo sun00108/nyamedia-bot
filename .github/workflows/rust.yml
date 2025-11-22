@@ -22,6 +22,11 @@ jobs:
     
     - name: Install SQLite for Bot
       run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+    - name: Create .env file
+      run: |
+        echo "VITE_BOT_USERNAME=nyamedia_subscription_dev_bot" >> .env
+        echo "VITE_REDIRECT_URL=https://request.bangumi.ca" >> .env
       
     - name: Build
       run: cargo build --bin nyasubworker
