@@ -107,16 +107,12 @@ async fn update_request(
         }
     };
 
-    // 获取请求详情和用户信息
-    let request_result: Result<(MediaRequest, TelegramUser), diesel::result::Error> = 
-        media_requests::table
-            .inner_join(telegram_users::table.on(media_requests::request_user.eq(telegram_users::telegram_id)))
-            .select((MediaRequest::as_select(), TelegramUser::as_select()))
-            .filter(media_requests::id.eq(payload.request_id))
-            .first(&mut conn);
-
-    let (request, user) = match request_result {
-        Ok(data) => data,
+    // 获取请求详情
+    let request = match media_requests::table
+        .filter(media_requests::id.eq(payload.request_id))
+        .first::<MediaRequest>(&mut conn)
+    {
+        Ok(request) => request,
         Err(_) => {
             return HttpResponse::BadRequest().json(ApiResponse {
                 success: false,
@@ -132,6 +128,7 @@ async fn update_request(
             message: "只能操作已提交状态的请求".to_string(),
         });
     }
+
 
     // 更新请求状态
     let update_result = diesel::update(media_requests::table.filter(media_requests::id.eq(payload.request_id)))
@@ -169,10 +166,10 @@ async fn update_request(
         }
     );
 
-    let chat_id = ChatId(user.telegram_id);
+    let chat_id = ChatId(request.request_user);
     if let Err(_) = data.bot.send_message(chat_id, notification_message).await {
         // 即使通知发送失败，也返回成功，因为状态已经更新
-        log::warn!("Failed to send notification to user {}", user.telegram_id);
+        log::warn!("Failed to send notification to user {}", request.request_user);
     }
 
     HttpResponse::Ok().json(ApiResponse {
