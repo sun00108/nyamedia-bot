@@ -283,6 +283,61 @@ body {
   font-size: 11px;
 }
 
+/* 管理员操作按钮 */
+.admin-actions {
+  padding: 8px 12px 12px 12px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.action-btn {
+  flex: 1;
+  min-width: 50px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+}
+
+.archive-btn {
+  background: #28a745;
+  color: white;
+}
+
+.archive-btn:hover {
+  background: #218838;
+  transform: translateY(-1px);
+}
+
+.invalid-btn {
+  background: #ffc107;
+  color: #212529;
+}
+
+.invalid-btn:hover {
+  background: #e0a800;
+  transform: translateY(-1px);
+}
+
+.cancel-btn {
+  background: #dc3545;
+  color: white;
+}
+
+.cancel-btn:hover {
+  background: #c82333;
+  transform: translateY(-1px);
+}
+
+.action-btn:active {
+  transform: translateY(0);
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
   .content {
@@ -322,5 +377,16 @@ body {
   .tab {
     padding: 14px 16px;
     font-size: 14px;
+  }
+  
+  .admin-actions {
+    padding: 6px 10px 10px 10px;
+    gap: 4px;
+  }
+  
+  .action-btn {
+    padding: 5px 6px;
+    font-size: 10px;
+    min-width: 45px;
   }
 }

@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 
+// 媒体请求状态常量
+const MEDIA_REQUEST_STATUS = {
+  SUBMITTED: 0,   // 已提交
+  ARCHIVED: 1,    // 已入库
+  CANCELLED: 2,   // 被取消
+  INVALID: 3,     // 不符合规范
+}
+
 function App() {
   const [user, setUser] = useState(null)
   const [error, setError] = useState(null)
@@ -46,6 +54,31 @@ function App() {
       setError('获取数据失败')
     } finally {
       setDataLoading(false)
+    }
+  }
+
+  // 更新媒体请求状态的函数
+  const updateRequestStatus = async (requestId, newStatus, actionName) => {
+    if (!confirm(`确认要将此媒体请求标记为"${actionName}"吗？`)) {
+      return
+    }
+
+    try {
+      const response = await axios.post('/api/update-request', {
+        request_id: requestId,
+        new_status: newStatus
+      })
+
+      if (response.data.success) {
+        // 刷新数据
+        await fetchData()
+        alert(`操作成功：${response.data.message}`)
+      } else {
+        alert(`操作失败：${response.data.message}`)
+      }
+    } catch (error) {
+      console.error('Failed to update request status:', error)
+      alert('更新状态失败，请重试')
     }
   }
 
@@ -319,6 +352,30 @@ function App() {
                             {new Date(item.created_at).toLocaleDateString()}
                           </span>
                         </div>
+                        
+                        {/* 管理员操作按钮 */}
+                        {registrationStatus?.admin && item.status === MEDIA_REQUEST_STATUS.SUBMITTED && (
+                          <div className="admin-actions">
+                            <button 
+                              className="action-btn archive-btn"
+                              onClick={() => updateRequestStatus(item.id, MEDIA_REQUEST_STATUS.ARCHIVED, '入库')}
+                            >
+                              入库
+                            </button>
+                            <button 
+                              className="action-btn invalid-btn"
+                              onClick={() => updateRequestStatus(item.id, MEDIA_REQUEST_STATUS.INVALID, '不合规')}
+                            >
+                              不合规
+                            </button>
+                            <button 
+                              className="action-btn cancel-btn"
+                              onClick={() => updateRequestStatus(item.id, MEDIA_REQUEST_STATUS.CANCELLED, '取消')}
+                            >
+                              取消
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
