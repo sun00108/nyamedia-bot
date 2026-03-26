@@ -9,6 +9,9 @@ use crate::schema::{media_requests, telegram_users, media};
 use crate::database;
 use crate::static_files;
 use crate::scraper;
+use crate::cli_auth;
+use crate::onedrive;
+use crate::media_upload;
 use chrono::Utc;
 
 struct WebhookData {
@@ -57,6 +60,27 @@ struct UpdateRequestPayload {
 struct ApiResponse {
     success: bool,
     message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateMediaUploadRequestPayload {
+    request_id: i32,
+    season: Option<i32>,
+    episode: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateMediaUploadSessionPayload {
+    request_code: String,
+    file_name: String,
+    file_size: u64,
+    conflict_behavior: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompleteMediaUploadPayload {
+    request_code: String,
+    file_name: String,
 }
 
 async fn handle_webhook(payload: web::Json<WebhookPayload>, data: web::Data<Arc<WebhookData>>) -> impl Responder {
@@ -474,6 +498,191 @@ async fn check_user_registration(path: web::Path<i64>) -> impl Responder {
     }
 }
 
+async fn create_media_upload_request(
+    req: actix_web::HttpRequest,
+    payload: web::Json<CreateMediaUploadRequestPayload>,
+) -> impl Responder {
+    let claims = match crate::cli_auth::middleware::verify_bearer_token(&req, &["upload:create"]) {
+        Ok(claims) => claims,
+        Err(err) => {
+            return match err {
+                crate::cli_auth::service::ServiceError::Unauthorized(message) => {
+                    HttpResponse::Unauthorized().json(serde_json::json!({ "error": message }))
+                }
+                crate::cli_auth::service::ServiceError::BadRequest(message) => {
+                    HttpResponse::BadRequest().json(serde_json::json!({ "error": message }))
+                }
+                crate::cli_auth::service::ServiceError::InvalidClientId => {
+                    HttpResponse::BadRequest().json(serde_json::json!({ "error": "client_id 不被允许" }))
+                }
+                crate::cli_auth::service::ServiceError::Conflict(message) => {
+                    HttpResponse::Conflict().json(serde_json::json!({ "error": message }))
+                }
+                crate::cli_auth::service::ServiceError::Config(message)
+                | crate::cli_auth::service::ServiceError::Internal(message) => {
+                    HttpResponse::InternalServerError().json(serde_json::json!({ "error": message }))
+                }
+            };
+        }
+    };
+
+    match media_upload::create_upload_request(
+        claims.telegram_user_id,
+        media_upload::CreateMediaUploadRequestInput {
+            request_id: payload.request_id,
+            season: payload.season,
+            episode: payload.episode,
+        },
+    ) {
+        Ok(result) => HttpResponse::Ok().json(result),
+        Err(media_upload::MediaUploadError::BadRequest(message)) => {
+            HttpResponse::BadRequest().json(serde_json::json!({ "error": message }))
+        }
+        Err(media_upload::MediaUploadError::Conflict(message)) => {
+            HttpResponse::Conflict().json(serde_json::json!({ "error": message }))
+        }
+        Err(media_upload::MediaUploadError::Internal(message)) => {
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": message }))
+        }
+    }
+}
+
+async fn create_media_upload_session(
+    onedrive_service: web::Data<onedrive::service::OnedriveService>,
+    req: actix_web::HttpRequest,
+    payload: web::Json<CreateMediaUploadSessionPayload>,
+) -> impl Responder {
+    match crate::cli_auth::middleware::verify_bearer_token(&req, &["upload:create"]) {
+        Ok(_) => {}
+        Err(err) => {
+            return match err {
+                crate::cli_auth::service::ServiceError::Unauthorized(message) => {
+                    HttpResponse::Unauthorized().json(serde_json::json!({ "error": message }))
+                }
+                crate::cli_auth::service::ServiceError::BadRequest(message) => {
+                    HttpResponse::BadRequest().json(serde_json::json!({ "error": message }))
+                }
+                crate::cli_auth::service::ServiceError::InvalidClientId => {
+                    HttpResponse::BadRequest().json(serde_json::json!({ "error": "client_id 不被允许" }))
+                }
+                crate::cli_auth::service::ServiceError::Conflict(message) => {
+                    HttpResponse::Conflict().json(serde_json::json!({ "error": message }))
+                }
+                crate::cli_auth::service::ServiceError::Config(message)
+                | crate::cli_auth::service::ServiceError::Internal(message) => {
+                    HttpResponse::InternalServerError().json(serde_json::json!({ "error": message }))
+                }
+            };
+        }
+    }
+
+    let (upload_request, session_input) = match media_upload::get_upload_request_for_session(
+        media_upload::CreateMediaUploadSessionInput {
+            request_code: payload.request_code.clone(),
+            file_name: payload.file_name.clone(),
+            file_size: payload.file_size,
+            conflict_behavior: payload.conflict_behavior.clone(),
+        },
+    ) {
+        Ok(result) => result,
+        Err(media_upload::MediaUploadError::BadRequest(message)) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({ "error": message }));
+        }
+        Err(media_upload::MediaUploadError::Conflict(message)) => {
+            return HttpResponse::Conflict().json(serde_json::json!({ "error": message }));
+        }
+        Err(media_upload::MediaUploadError::Internal(message)) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({ "error": message }));
+        }
+    };
+
+    let target_path = format!("{}{}", upload_request.target_path, session_input.file_name);
+    let conflict_behavior = session_input
+        .conflict_behavior
+        .as_deref()
+        .unwrap_or("replace");
+
+    match onedrive_service
+        .create_upload_session(
+            &target_path,
+            Some(&session_input.file_name),
+            session_input.file_size,
+            conflict_behavior,
+        )
+        .await
+    {
+        Ok(result) => HttpResponse::Ok().json(media_upload::CreateMediaUploadSessionResult {
+            upload_url: result.upload_url,
+            expiration_date_time: result.expiration_date_time,
+            path: target_path,
+        }),
+        Err(onedrive::service::OnedriveError::BadRequest(message)) => {
+            HttpResponse::BadRequest().json(serde_json::json!({ "error": message }))
+        }
+        Err(onedrive::service::OnedriveError::Forbidden(message)) => {
+            HttpResponse::Forbidden().json(serde_json::json!({ "error": message }))
+        }
+        Err(onedrive::service::OnedriveError::Unauthorized(message)) => {
+            HttpResponse::Unauthorized().json(serde_json::json!({ "error": message }))
+        }
+        Err(onedrive::service::OnedriveError::Conflict(message)) => {
+            HttpResponse::Conflict().json(serde_json::json!({ "error": message }))
+        }
+        Err(onedrive::service::OnedriveError::Upstream(message)) => {
+            HttpResponse::BadGateway().json(serde_json::json!({ "error": message }))
+        }
+        Err(onedrive::service::OnedriveError::Config(message))
+        | Err(onedrive::service::OnedriveError::Internal(message)) => {
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": message }))
+        }
+    }
+}
+
+async fn complete_media_upload(
+    req: actix_web::HttpRequest,
+    payload: web::Json<CompleteMediaUploadPayload>,
+) -> impl Responder {
+    match crate::cli_auth::middleware::verify_bearer_token(&req, &["upload:create"]) {
+        Ok(_) => {}
+        Err(err) => {
+            return match err {
+                crate::cli_auth::service::ServiceError::Unauthorized(message) => {
+                    HttpResponse::Unauthorized().json(serde_json::json!({ "error": message }))
+                }
+                crate::cli_auth::service::ServiceError::BadRequest(message) => {
+                    HttpResponse::BadRequest().json(serde_json::json!({ "error": message }))
+                }
+                crate::cli_auth::service::ServiceError::InvalidClientId => {
+                    HttpResponse::BadRequest().json(serde_json::json!({ "error": "client_id 不被允许" }))
+                }
+                crate::cli_auth::service::ServiceError::Conflict(message) => {
+                    HttpResponse::Conflict().json(serde_json::json!({ "error": message }))
+                }
+                crate::cli_auth::service::ServiceError::Config(message)
+                | crate::cli_auth::service::ServiceError::Internal(message) => {
+                    HttpResponse::InternalServerError().json(serde_json::json!({ "error": message }))
+                }
+            };
+        }
+    }
+
+    match media_upload::complete_upload_request(media_upload::CompleteMediaUploadInput {
+        request_code: payload.request_code.clone(),
+        file_name: payload.file_name.clone(),
+    }) {
+        Ok(result) => HttpResponse::Ok().json(result),
+        Err(media_upload::MediaUploadError::BadRequest(message)) => {
+            HttpResponse::BadRequest().json(serde_json::json!({ "error": message }))
+        }
+        Err(media_upload::MediaUploadError::Conflict(message)) => {
+            HttpResponse::Conflict().json(serde_json::json!({ "error": message }))
+        }
+        Err(media_upload::MediaUploadError::Internal(message)) => {
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": message }))
+        }
+    }
+}
+
 pub async fn run_server() -> std::io::Result<()> {
     println!("Starting Emby Webhook Server...");
 
@@ -492,6 +701,8 @@ pub async fn run_server() -> std::io::Result<()> {
         chat_list,
         series_ids: Mutex::new(Vec::new()),
     });
+    let onedrive_service = onedrive::service::OnedriveService::from_env()
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", err)))?;
 
     let bind_address = env::var("WEBHOOK_BIND_ADDRESS").unwrap();
     let bind_port = env::var("WEBHOOK_BIND_PORT").unwrap();
@@ -499,14 +710,20 @@ pub async fn run_server() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(data.clone()))
+            .app_data(web::Data::new(onedrive_service.clone()))
             .service(web::resource("/webhook").route(web::post().to(handle_webhook)))
             .service(web::resource("/api/check_user/{telegram_id}").route(web::get().to(check_user_registration)))
+            .service(web::resource("/api/media/upload-requests").route(web::post().to(create_media_upload_request)))
+            .service(web::resource("/api/media/upload-sessions").route(web::post().to(create_media_upload_session)))
+            .service(web::resource("/api/media/upload-completions").route(web::post().to(complete_media_upload)))
             .service(web::resource("/api/media").route(web::get().to(get_media_list)))
             .service(web::resource("/api/pending").route(web::get().to(get_pending_requests)))
             .service(web::resource("/api/archived").route(web::get().to(get_archived_requests)))
             .service(web::resource("/api/update-request").route(web::post().to(update_request)))
             .service(web::resource("/api/batch-scrape").route(web::post().to(batch_scrape_media)))
             .service(web::resource("/assets/{filename:.*}").route(web::get().to(static_files::serve_asset_direct)))
+            .configure(cli_auth::http::configure)
+            .configure(onedrive::http::configure)
             .configure(static_files::configure_static_routes)
     })
         .bind(format!("{}:{}",bind_address,bind_port))?

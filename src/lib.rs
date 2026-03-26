@@ -7,6 +7,9 @@ pub mod bot;
 pub mod webhook;
 pub mod static_files;
 pub mod scraper;
+pub mod cli_auth;
+pub mod onedrive;
+pub mod media_upload;
 
 use std::env;
 use reqwest::Client;

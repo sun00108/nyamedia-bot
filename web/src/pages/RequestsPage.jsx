@@ -18,6 +18,7 @@ export default function RequestsPage() {
     const [pendingList, setPendingList] = useState([])
     const [archivedList, setArchivedList] = useState([])
     const [dataLoading, setDataLoading] = useState(false)
+    const [copiedId, setCopiedId] = useState(null)
     const telegramLoginRef = useRef(null)
 
     // 检查用户注册状态的函数
@@ -79,6 +80,16 @@ export default function RequestsPage() {
         } catch (error) {
             console.error('Failed to update request status:', error)
             alert('更新状态失败，请重试')
+        }
+    }
+
+    const copyRequestId = async (requestId) => {
+        try {
+            await navigator.clipboard.writeText(String(requestId))
+            setCopiedId(requestId)
+            window.setTimeout(() => setCopiedId(null), 1500)
+        } catch (error) {
+            console.error('Failed to copy request id:', error)
         }
     }
 
@@ -345,6 +356,27 @@ export default function RequestsPage() {
                                                 )}
                                                 <h3 className="media-title">
                                                     {item.title || `${item.source} ${item.media_id}`}
+                                                    {activeTab === 'pending' && (
+                                                        <>
+                                                            {' '}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => copyRequestId(item.id)}
+                                                                style={{
+                                                                    border: 'none',
+                                                                    background: 'none',
+                                                                    padding: 0,
+                                                                    margin: 0,
+                                                                    color: copiedId === item.id ? '#198754' : '#6c757d',
+                                                                    cursor: 'pointer',
+                                                                    fontSize: '0.9em'
+                                                                }}
+                                                                title={copiedId === item.id ? '已复制' : '点击复制 ID'}
+                                                            >
+                                                                [ID: {item.id}]
+                                                            </button>
+                                                        </>
+                                                    )}
                                                 </h3>
                                                 <div className="media-meta">
                                                     <span className="media-source">{item.source}</span>

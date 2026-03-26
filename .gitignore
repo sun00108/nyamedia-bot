@@ -11,3 +11,5 @@ web/node_modules
 static/assets
 
 *.md
+
+onedrive-session.json

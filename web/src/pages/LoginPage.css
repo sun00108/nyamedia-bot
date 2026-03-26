@@ -1,0 +1,143 @@
+.cli-login-page {
+    min-height: 100vh;
+    background:
+        radial-gradient(circle at top, rgba(254, 215, 170, 0.55), transparent 32%),
+        linear-gradient(160deg, #f7f4ea 0%, #ece7db 52%, #ddd4bf 100%);
+    color: #26190d;
+}
+
+.cli-login-shell {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.cli-login-card {
+    width: min(680px, 100%);
+    background: rgba(255, 251, 243, 0.92);
+    border: 1px solid rgba(82, 52, 24, 0.12);
+    border-radius: 28px;
+    box-shadow: 0 24px 80px rgba(76, 54, 28, 0.16);
+    padding: 32px;
+    backdrop-filter: blur(10px);
+}
+
+.cli-login-kicker {
+    margin: 0 0 8px;
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #8a5a28;
+}
+
+.cli-login-card h1 {
+    margin: 0;
+    font-size: clamp(30px, 5vw, 46px);
+    line-height: 1.05;
+}
+
+.cli-login-subtitle {
+    margin: 14px 0 0;
+    color: #5f4d3d;
+    line-height: 1.6;
+}
+
+.cli-login-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 18px;
+    font-size: 13px;
+    color: #7b634c;
+}
+
+.cli-login-panel {
+    margin-top: 24px;
+    padding: 24px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(82, 52, 24, 0.1);
+}
+
+.cli-login-error {
+    color: #a12722;
+    background: rgba(255, 233, 231, 0.88);
+}
+
+.cli-login-success {
+    background: rgba(243, 247, 238, 0.94);
+}
+
+.cli-login-step {
+    margin: 0 0 16px;
+    font-weight: 700;
+}
+
+.cli-widget-slot {
+    min-height: 48px;
+}
+
+.cli-code-block {
+    margin-top: 12px;
+    padding: 16px;
+    border-radius: 16px;
+    background: #1d140d;
+    color: #f8f1dd;
+    word-break: break-all;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.cli-copy-button {
+    margin-top: 16px;
+    border: none;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #b1642f, #89451b);
+    color: #fff8f0;
+    padding: 12px 18px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.cli-copy-button:hover {
+    filter: brightness(1.05);
+}
+
+.cli-login-hint {
+    margin: 14px 0 0;
+    color: #67533f;
+    line-height: 1.6;
+}
+
+.cli-spinner {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 3px solid rgba(137, 69, 27, 0.16);
+    border-top-color: #89451b;
+    animation: cli-spin 0.9s linear infinite;
+}
+
+@keyframes cli-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (max-width: 640px) {
+    .cli-login-card {
+        padding: 24px;
+        border-radius: 22px;
+    }
+
+    .cli-login-panel {
+        padding: 18px;
+    }
+}
