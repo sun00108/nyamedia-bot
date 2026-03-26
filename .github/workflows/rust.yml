@@ -33,6 +33,9 @@ jobs:
 
     - name: Build Bot
       run: cargo build --bin bot
+
+    - name: Build odlogin
+      run: cargo build --bin odlogin
       
     - name: Upload nyasubworker artifact
       uses: actions/upload-artifact@v4
@@ -45,3 +48,9 @@ jobs:
       with:
           name: bot
           path: target/debug/bot
+
+    - name: Upload odlogin artifact
+      uses: actions/upload-artifact@v4
+      with:
+          name: odlogin
+          path: target/debug/odlogin
